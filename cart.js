@@ -1,3 +1,29 @@
+/* ── Product page: fix empty flyout name from Cloudflare-cached custom.js ── */
+(function() {
+  'use strict';
+  if (window.location.pathname.toLowerCase().indexOf('shoppingcart') !== -1) return;
+  /* Wait for the flyout drawer to be injected by custom.js */
+  var attempts = 0;
+  var poll = setInterval(function() {
+    var drawer = document.getElementById('tcf-drawer');
+    if (!drawer) { if (++attempts > 40) clearInterval(poll); return; }
+    clearInterval(poll);
+    /* Observe class changes — drawer opens by adding tcf-open */
+    var mo = new MutationObserver(function() {
+      if (!drawer.classList.contains('tcf-open')) return;
+      var nameEl = document.getElementById('tcf-name');
+      if (!nameEl || nameEl.textContent.trim()) return;
+      /* Name is blank — grab from h1 */
+      var h1s = document.querySelectorAll('h1');
+      for (var i = 0; i < h1s.length; i++) {
+        var txt = h1s[i].textContent.trim();
+        if (txt) { nameEl.textContent = txt; break; }
+      }
+    });
+    mo.observe(drawer, { attributes: true, attributeFilter: ['class'] });
+  }, 250);
+})();
+
 (function() {
   'use strict';
   if (window.location.pathname.toLowerCase().indexOf('shoppingcart') === -1) return;
