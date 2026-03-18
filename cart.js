@@ -1,24 +1,117 @@
-/* ── Product page: fix empty flyout name from Cloudflare-cached custom.js ── */
+/* ── Product page: enhanced cart flyout via cart.js (bypasses CF-cached custom.js) ── */
 (function() {
   'use strict';
   if (window.location.pathname.toLowerCase().indexOf('shoppingcart') !== -1) return;
-  /* Wait for the flyout drawer to be injected by custom.js */
+
+  /* 1. Kill Volusion's built-in push-cart immediately — it shows stale items */
+  function killVolCart() {
+    var v = document.getElementById('vol-push-cart');
+    if (v) { v.style.cssText = 'display:none!important'; }
+  }
+  killVolCart();
+  document.addEventListener('DOMContentLoaded', killVolCart);
+
+  /* 2. Inject cart-list styles */
+  var s = document.createElement('style');
+  s.textContent =
+    '#tcf-cart-list{margin:10px 0 0;border-top:1px solid rgba(255,255,255,.12);padding-top:10px;max-height:220px;overflow-y:auto}' +
+    '.tcf-cl-item{display:flex;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.07)}' +
+    '.tcf-cl-item:last-child{border-bottom:none}' +
+    '.tcf-cl-img{width:44px;height:44px;min-width:44px;background:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden}' +
+    '.tcf-cl-img img{width:100%;height:100%;object-fit:contain;padding:2px}' +
+    '.tcf-cl-info{flex:1;min-width:0}' +
+    '.tcf-cl-name{font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+    '.tcf-cl-meta{font-size:11px;color:rgba(255,255,255,.5);margin-top:2px}' +
+    '.tcf-cl-new{font-size:10px;background:#4caf50;color:#fff;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle}';
+  document.head.appendChild(s);
+
+  /* 3. Parse cart items from ShoppingCart.asp HTML */
+  function parseCartHTML(html) {
+    var dp = new DOMParser().parseFromString(html, 'text/html');
+    var items = [];
+    dp.querySelectorAll('#v65-cart-table .v65-cart-details-row').forEach(function(row) {
+      var nameEl = row.querySelector('b.cart-item-name');
+      var qtyEl  = row.querySelector('input[id^="Quantity"]');
+      var fonts  = row.querySelectorAll('font.carttext');
+      var imgEl  = row.querySelector('.v65-cart-detail-productimage img');
+      if (!nameEl || !qtyEl) return;
+      var unit = 0;
+      fonts.forEach(function(f) {
+        if (!f.querySelector('b') && f.textContent.indexOf('$') !== -1) {
+          var m = f.textContent.match(/[\d,]+\.\d{2}/);
+          if (m) unit = parseFloat(m[0].replace(/,/g, ''));
+        }
+      });
+      var imgSrc = imgEl ? imgEl.src : '';
+      if (imgSrc.indexOf('nophoto') !== -1) imgSrc = '';
+      items.push({ name: nameEl.textContent.trim(), qty: qtyEl.value, unit: unit, img: imgSrc });
+    });
+    return items;
+  }
+
+  /* 4. Render cart list in flyout */
+  function renderCartList(items, newName) {
+    var listEl = document.getElementById('tcf-cart-list');
+    if (!listEl) {
+      var body = document.getElementById('tcf-body');
+      if (!body) return;
+      listEl = document.createElement('div');
+      listEl.id = 'tcf-cart-list';
+      body.appendChild(listEl);
+    }
+    if (!items.length) { listEl.innerHTML = ''; return; }
+    listEl.innerHTML = items.map(function(it) {
+      var isNew = newName && it.name.toLowerCase().indexOf(newName.toLowerCase().substring(0, 10)) !== -1;
+      return '<div class="tcf-cl-item">' +
+        '<div class="tcf-cl-img">' + (it.img ? '<img src="' + it.img + '" loading="lazy">' : '') + '</div>' +
+        '<div class="tcf-cl-info">' +
+          '<div class="tcf-cl-name">' + it.name + (isNew ? '<span class="tcf-cl-new">NEW</span>' : '') + '</div>' +
+          '<div class="tcf-cl-meta">Qty ' + it.qty + (it.unit ? ' &bull; $' + it.unit.toFixed(2) : '') + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  /* 5. Wait for our custom drawer, then wire everything */
   var attempts = 0;
   var poll = setInterval(function() {
     var drawer = document.getElementById('tcf-drawer');
-    if (!drawer) { if (++attempts > 40) clearInterval(poll); return; }
+    if (!drawer) { if (++attempts > 60) clearInterval(poll); return; }
     clearInterval(poll);
-    /* Observe class changes — drawer opens by adding tcf-open */
+
     var mo = new MutationObserver(function() {
       if (!drawer.classList.contains('tcf-open')) return;
+
+      /* Fix empty product name */
       var nameEl = document.getElementById('tcf-name');
-      if (!nameEl || nameEl.textContent.trim()) return;
-      /* Name is blank — grab from h1 */
-      var h1s = document.querySelectorAll('h1');
-      for (var i = 0; i < h1s.length; i++) {
-        var txt = h1s[i].textContent.trim();
-        if (txt) { nameEl.textContent = txt; break; }
+      if (nameEl && !nameEl.textContent.trim()) {
+        var h1s = document.querySelectorAll('h1');
+        for (var i = 0; i < h1s.length; i++) {
+          var t = h1s[i].textContent.trim();
+          if (t) { nameEl.textContent = t; break; }
+        }
       }
+
+      /* Fetch updated cart and show full list */
+      var currentName = nameEl ? nameEl.textContent.trim() : '';
+      fetch('/ShoppingCart.asp', { credentials: 'same-origin' })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+          var items = parseCartHTML(html);
+          renderCartList(items, currentName);
+          /* Update item count */
+          var nEl = document.getElementById('tcf-n');
+          if (nEl && items.length) nEl.textContent = items.length;
+          var iEl = document.getElementById('tcf-items');
+          if (iEl && items.length) iEl.textContent = items.length;
+          /* Update total from cart subtotal */
+          var subM = html.match(/class="v65-cart-subtotal-cell[^"]*"[^>]*>\s*<[^>]*>\s*\$?([\d,]+\.\d{2})/);
+          if (!subM) subM = html.match(/id="v65-cart-total-estimate-cell[^"]*"[^>]*>[\s\S]*?\$([\d,]+\.\d{2})/);
+          if (subM) {
+            var totEl = document.getElementById('tcf-total');
+            if (totEl) totEl.textContent = '$' + subM[1];
+          }
+        }).catch(function() {});
     });
     mo.observe(drawer, { attributes: true, attributeFilter: ['class'] });
   }, 250);
