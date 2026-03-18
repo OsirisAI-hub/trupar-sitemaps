@@ -160,9 +160,9 @@
     sidebar.innerHTML =
       '<h3>Order Summary</h3>' +
       '<div class="tc-summary-row"><span>Subtotal</span><span id="tc-sub">' + fmtPrice(sub) + '</span></div>' +
-      '<div class="tc-summary-row"><span>Shipping</span><span style="color:#4caf50;font-weight:600">Free</span></div>' +
-      '<div class="tc-summary-row"><span>Tax</span><span id="tc-tax">' + fmtPrice(tax) + '</span></div>' +
-      '<div class="tc-summary-row tc-total"><span>Total</span><span id="tc-grand">' + fmtPrice(grand) + '</span></div>' +
+      '<div class="tc-summary-row"><span>Shipping</span><span style="color:rgba(255,255,255,.45);font-style:italic;font-size:12px">Calculated at checkout</span></div>' +
+      '<div class="tc-summary-row"><span>Tax</span><span style="color:rgba(255,255,255,.45);font-style:italic;font-size:12px">Calculated at checkout</span></div>' +
+      '<div class="tc-summary-row tc-total"><span>Total</span><span id="tc-grand">' + fmtPrice(sub) + '</span></div>' +
       '<button id="tc-checkout-btn">Proceed to Checkout &rarr;</button>' +
       '<a id="tc-continue" href="/">&#8592; Continue Shopping</a>' +
       '<div class="tc-trust">' +
@@ -189,11 +189,10 @@
   /* ── Update totals in sidebar ── */
   function refreshSidebarTotals() {
     var sub = items.reduce(function(s, it) { return s + it.lineTotal; }, 0);
-    var grand = sub + totals.tax;
     var subEl = document.getElementById('tc-sub');
     var grandEl = document.getElementById('tc-grand');
     if (subEl) subEl.textContent = fmtPrice(sub);
-    if (grandEl) grandEl.textContent = fmtPrice(grand);
+    if (grandEl) grandEl.textContent = fmtPrice(sub); /* tax calculated at checkout */
   }
 
   /* ── Event delegation ── */
@@ -290,6 +289,38 @@
   wireEvents();
   wrap.appendChild(leftDiv);
   wrap.appendChild(sidebar);
+
+  /* ── Async image loading from product pages ── */
+  function loadProductImages() {
+    items.forEach(function(item, idx) {
+      if (!item.link || item.link === '#') return;
+      fetch(item.link, {credentials: 'same-origin'})
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+          /* Try itemprop="image" first (Volusion product page), then og:image */
+          var m = html.match(/itemprop=['"]image['"][^>]*src=['"]([^'"]+)['"]/i);
+          if (!m) m = html.match(/src=['"]([^'"]+)['"'][^>]*itemprop=['"]image['"]/i);
+          if (!m) m = html.match(/property=['"]og:image['"][^>]*content=['"]([^'"]+)['"]/i);
+          if (!m) m = html.match(/content=['"]([^'"]+)['"'][^>]*property=['"]og:image['"]/i);
+          if (!m) return;
+          var imgUrl = m[1];
+          if (!imgUrl || imgUrl.indexOf('nophoto') !== -1) return;
+          /* Ensure absolute URL */
+          if (imgUrl.indexOf('//') === 0) imgUrl = 'https:' + imgUrl;
+          var card = leftDiv.querySelector('.tc-item[data-index="' + idx + '"]');
+          if (!card) return;
+          var imgWrap = card.querySelector('.tc-item-img');
+          if (!imgWrap) return;
+          var img = new Image();
+          img.alt = '';
+          img.loading = 'lazy';
+          img.onload = function() { imgWrap.innerHTML = ''; imgWrap.appendChild(img); };
+          img.src = imgUrl;
+        }).catch(function() {});
+    });
+  }
+  /* Fire after a small delay so page render isn't blocked */
+  setTimeout(loadProductImages, 200);
 
   /* Inject after page header, before original cart area */
   var insertBefore = cartTable ? cartTable.parentElement : document.querySelector('.v65-product-detail, #v65-main-wrap, .main');
