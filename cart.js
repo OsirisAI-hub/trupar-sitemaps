@@ -25,6 +25,8 @@
     '.tcf-cl-new{font-size:10px;background:#4caf50;color:#fff;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle}';
   document.head.appendChild(s);
 
+  var _origin = window.location.origin; /* capture before DOMParser changes context */
+
   /* 3. Parse cart items from ShoppingCart.asp HTML */
   function parseCartHTML(html) {
     var dp = new DOMParser().parseFromString(html, 'text/html');
@@ -34,7 +36,6 @@
       var linkEl = row.querySelector('a.cart-item-name');
       var qtyEl  = row.querySelector('input[id^="Quantity"]');
       var fonts  = row.querySelectorAll('font.carttext');
-      var imgEl  = row.querySelector('.v65-cart-detail-productimage img');
       if (!nameEl || !qtyEl) return;
       var unit = 0;
       fonts.forEach(function(f) {
@@ -43,27 +44,29 @@
           if (m) unit = parseFloat(m[0].replace(/,/g, ''));
         }
       });
-      var imgSrc = imgEl ? imgEl.src : '';
-      if (imgSrc.indexOf('nophoto') !== -1 || imgSrc.indexOf('templates') !== -1) imgSrc = '';
-      items.push({ name: nameEl.textContent.trim(), qty: qtyEl.value, unit: unit, img: imgSrc, link: linkEl ? linkEl.href : '' });
+      /* Build absolute product URL from relative href (DOMParser has no base URL) */
+      var rawHref = linkEl ? (linkEl.getAttribute('href') || '') : '';
+      rawHref = rawHref.replace(/&?CartID=\d+/g, '').replace(/\?$/, ''); /* strip CartID */
+      var link = rawHref ? (_origin + (rawHref.charAt(0) === '/' ? '' : '/') + rawHref) : '';
+      items.push({ name: nameEl.textContent.trim(), qty: qtyEl.value, unit: unit, img: '', link: link });
     });
     return items;
   }
 
-  /* 3b. Async-load real images for cart items via product page fetch */
+  /* 3b. Load image key from product page for every cart item */
   function loadFlyoutImages(items) {
     items.forEach(function(item, idx) {
-      if (item.img || !item.link) return; /* already has image or no link */
+      if (!item.link) return;
       fetch(item.link, { credentials: 'same-origin' })
         .then(function(r) { return r.text(); })
         .then(function(html) {
-          var m = html.match(/itemprop=['"]image['"][^>]*src=['"]([^'"]+)['"]/i);
-          if (!m) m = html.match(/src=['"]([^'"]+)['"]\s[^>]*itemprop=['"]image['"]/i);
+          /* Extract [itemprop="image"] src — works in both attribute orders */
+          var m = html.match(/itemprop=['"]image['"][^>]*src=['"]([^'"]+)['"]/i)
+               || html.match(/src=['"]([^'"]+)['"]\s+[^>]*itemprop=['"]image['"]/i);
           if (!m) return;
           var imgUrl = m[1];
           if (!imgUrl || imgUrl.indexOf('nophoto') !== -1) return;
           if (imgUrl.indexOf('//') === 0) imgUrl = 'https:' + imgUrl;
-          /* Update the rendered item thumbnail */
           var listEl = document.getElementById('tcf-cart-list');
           if (!listEl) return;
           var imgWrap = listEl.querySelectorAll('.tcf-cl-img')[idx];
