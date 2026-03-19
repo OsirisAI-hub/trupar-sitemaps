@@ -1,3 +1,48 @@
+/* ── Breadcrumb JSON-LD fix (GitHub Pages, bypasses CF-cached custom.js) ── */
+(function() {
+  'use strict';
+  function fixBreadcrumbs() {
+    var cleanUrl = window.location.href.split('?')[0].split('#')[0];
+    /* 1. Patch existing Volusion BreadcrumbList JSON-LD — fill in missing names */
+    document.querySelectorAll('script[type="application/ld+json"]').forEach(function(el) {
+      try {
+        var data = JSON.parse(el.textContent);
+        var list = data['@type'] === 'BreadcrumbList' ? data
+          : (Array.isArray(data['@graph']) ? data['@graph'].find(function(n){ return n['@type']==='BreadcrumbList'; }) : null);
+        if (!list || !list.itemListElement) return;
+        var changed = false;
+        list.itemListElement.forEach(function(item) {
+          if (!item.name) {
+            var url = String((item.item && (item.item['@id'] || item.item)) || '');
+            var slug = url.replace(/\/$/, '').split('/').pop().replace(/[-_]/g,' ').replace(/\.htm$/,'');
+            item.name = slug || 'Home';
+            changed = true;
+          }
+        });
+        if (changed) el.textContent = JSON.stringify(data);
+      } catch(e) {}
+    });
+    /* 2. Inject our own clean breadcrumb if none already exists with data-bc="1" */
+    if (document.querySelector('script[data-bc="1"]')) return;
+    var bc = document.querySelector('.vCSS_breadcrumb_td');
+    if (!bc) return;
+    var links = Array.from(bc.querySelectorAll('a[href]'));
+    if (!links.length) return;
+    var items = links.map(function(link, i) {
+      return {'@type':'ListItem','position':i+1,'name':link.textContent.trim()||'Home','item':link.href};
+    });
+    var h1text = '';
+    document.querySelectorAll('h1').forEach(function(h){ if (!h1text && h.textContent.trim()) h1text = h.textContent.trim(); });
+    if (h1text) items.push({'@type':'ListItem','position':items.length+1,'name':h1text,'item':cleanUrl});
+    var s = document.createElement('script');
+    s.type = 'application/ld+json'; s.setAttribute('data-bc','1');
+    s.textContent = JSON.stringify({'@context':'https://schema.org','@type':'BreadcrumbList','itemListElement':items});
+    document.head.appendChild(s);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fixBreadcrumbs);
+  else fixBreadcrumbs();
+})();
+
 /* ── Product page: enhanced cart flyout via cart.js (bypasses CF-cached custom.js) ── */
 (function() {
   'use strict';
