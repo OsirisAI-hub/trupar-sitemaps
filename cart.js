@@ -546,3 +546,89 @@
   }
 })();
 
+
+/* ── Product JSON-LD injection (fixes GSC "missing offers" critical error) ── */
+(function() {
+  'use strict';
+  // Only run on product detail pages, not cart/checkout/category
+  var path = window.location.pathname.toLowerCase();
+  if (path.indexOf('shoppingcart') !== -1 || path.indexOf('checkout') !== -1) return;
+  var productContainer = document.querySelector('[itemscope][itemtype*="schema.org/Product"]');
+  if (!productContainer) return; // not a product page
+
+  function getProductJsonLd() {
+    var name = '';
+    var nameEl = document.querySelector('h1 [itemprop="name"], [itemprop="name"]');
+    if (!nameEl || !nameEl.textContent.trim()) {
+      nameEl = document.querySelector('h1');
+    }
+    if (nameEl) name = nameEl.textContent.trim();
+
+    var sku = '';
+    var skuEl = document.querySelector('.product_code, [itemprop="sku"]');
+    if (skuEl) sku = skuEl.textContent.trim();
+    if (!sku) {
+      var m = window.location.pathname.match(/\/([^\/]+)\.htm$/i);
+      if (m) sku = m[1].replace(/-p$/, '').toUpperCase();
+    }
+
+    var price = '';
+    var priceEl = document.querySelector('[itemprop="price"]');
+    if (priceEl) price = priceEl.getAttribute('content') || priceEl.textContent.replace(/[^0-9.]/g,'').trim();
+
+    var image = '';
+    var imgEl = document.querySelector('[itemprop="image"]');
+    if (imgEl) image = imgEl.src || imgEl.getAttribute('content') || '';
+
+    var brand = '';
+    var mfrEl = document.querySelector('[itemprop="manufacturer"]');
+    if (mfrEl) brand = mfrEl.getAttribute('content') || mfrEl.textContent.trim();
+
+    var availability = 'https://schema.org/InStock';
+    var availEl = document.querySelector('[itemprop="availability"]');
+    if (availEl) {
+      var av = availEl.getAttribute('content') || '';
+      if (/OutOfStock|out/i.test(av)) availability = 'https://schema.org/OutOfStock';
+      else if (/PreOrder|pre/i.test(av)) availability = 'https://schema.org/PreOrder';
+    }
+
+    if (!name || !price) return null;
+
+    var obj = {
+      '@context': 'https://schema.org/',
+      '@type': 'Product',
+      'name': name,
+      'offers': {
+        '@type': 'Offer',
+        'price': price,
+        'priceCurrency': 'USD',
+        'availability': availability,
+        'itemCondition': 'https://schema.org/NewCondition',
+        'url': window.location.href.split('?')[0]
+      }
+    };
+    if (sku)   obj.sku = sku;
+    if (image) obj.image = image;
+    if (brand) obj.brand = { '@type': 'Brand', 'name': brand };
+
+    return obj;
+  }
+
+  function inject() {
+    // Don't double-inject
+    if (document.querySelector('script[data-pld="1"]')) return;
+    var data = getProductJsonLd();
+    if (!data) return;
+    var s = document.createElement('script');
+    s.type = 'application/ld+json';
+    s.setAttribute('data-pld', '1');
+    s.textContent = JSON.stringify(data);
+    document.head.appendChild(s);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', inject);
+  } else {
+    inject();
+  }
+})();
