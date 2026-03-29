@@ -763,3 +763,17 @@
     inject();
   }
 })();
+
+/* ── SEO Link Injection Loader ── */
+/* Loads seo-links.js on category pages to inject hidden product links for Google */
+(function() {
+  'use strict';
+  var path = window.location.pathname;
+  // Only load on category pages
+  if (!/category-s\/\d+\.htm/i.test(path)) return;
+  
+  var script = document.createElement('script');
+  script.src = 'https://osirisai-hub.github.io/trupar-sitemaps/seo-links.js?v=1';
+  script.async = true;
+  document.head.appendChild(script);
+})();
