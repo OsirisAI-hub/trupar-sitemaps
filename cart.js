@@ -1,3 +1,130 @@
+/* ── Core Web Vitals fixes (LCP + CLS + INP) ── */
+(function() {
+  'use strict';
+
+  var isProduct = !!document.querySelector('[itemscope][itemtype*="schema.org/Product"]');
+  var isCart = /shoppingcart/i.test(window.location.pathname);
+
+  /* ── 1. LCP FIX: preload the main product image with high priority ── */
+  if (isProduct) {
+    // Run immediately — before DOMContentLoaded for maximum effect
+    function boostLCPImage() {
+      // Find the product image (Volusion puts it as itemprop=image)
+      var img = document.querySelector('[itemprop="image"]');
+      if (!img) img = document.querySelector('img[src*="doc.tspaa.com"]');
+      if (!img || !img.src) return;
+
+      // Set fetchpriority=high on the image itself
+      img.setAttribute('fetchpriority', 'high');
+      img.setAttribute('loading', 'eager');
+      // Remove lazy loading if Volusion added it
+      img.removeAttribute('loading');
+      img.setAttribute('fetchpriority', 'high');
+
+      // Inject a <link rel="preload"> into <head> so browser fetches it ASAP
+      if (!document.querySelector('link[data-lcp-preload]')) {
+        var preload = document.createElement('link');
+        preload.rel = 'preload';
+        preload.as = 'image';
+        preload.href = img.src;
+        preload.setAttribute('fetchpriority', 'high');
+        preload.setAttribute('data-lcp-preload', '1');
+        document.head.insertBefore(preload, document.head.firstChild);
+      }
+    }
+
+    // Run immediately if possible, otherwise on DOMContentLoaded
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', boostLCPImage);
+    } else {
+      boostLCPImage();
+    }
+
+    // Also observe: if Volusion swaps the image src via JS, re-boost
+    var lcpObs = new MutationObserver(function(mutations) {
+      mutations.forEach(function(m) {
+        if (m.type === 'attributes' && m.attributeName === 'src') {
+          var img = m.target;
+          if (img.src && img.src.indexOf('doc.tspaa.com') !== -1) {
+            img.setAttribute('fetchpriority', 'high');
+            var existing = document.querySelector('link[data-lcp-preload]');
+            if (existing) existing.href = img.src;
+          }
+        }
+      });
+    });
+    document.addEventListener('DOMContentLoaded', function() {
+      var img = document.querySelector('[itemprop="image"], img[src*="doc.tspaa.com"]');
+      if (img) lcpObs.observe(img, { attributes: true, attributeFilter: ['src'] });
+    });
+  }
+
+  /* ── 2. CLS FIX: reserve space for our injected UI before it renders ── */
+  // Inject a style block that pre-allocates space for the cart redesign
+  // so DOM injection doesn't shift content
+  var style = document.createElement('style');
+  style.setAttribute('data-cwv', '1');
+  style.textContent = [
+    /* Product page: reserve height for our 2-col layout injection */
+    isProduct ? [
+      '#tp-product-wrap { min-height: 400px; }',
+      '.tp-product-col-left { min-height: 300px; }',
+      /* Prevent image zoom overlay from causing CLS */
+      '#vZoom_Overlay { contain: layout; }',
+      /* Prevent Volusion's hidden elements from reflowing */
+      '#v65-product-parent { contain: layout size; }',
+      '#v65-product-related { contain: layout size; }',
+      '.colors_descriptionbox { contain: layout; }',
+    ].join('\n') : '',
+
+    /* Cart page: reserve space for our redesign */
+    isCart ? [
+      '#tp-cart-wrap { min-height: 500px; }',
+      '.tp-cart-left { min-height: 400px; }',
+      '.tp-cart-right { min-height: 200px; }',
+    ].join('\n') : '',
+
+    /* Global: prevent font-swap CLS */
+    '@font-face { font-display: swap; }',
+
+    /* Prevent image dimension CLS — force aspect ratio on product images */
+    isProduct ? 'img[itemprop="image"] { aspect-ratio: 1/1; width: 100%; max-width: 400px; height: auto; }' : '',
+
+  ].filter(Boolean).join('\n');
+  // Insert style ASAP in head
+  if (document.head) {
+    document.head.appendChild(style);
+  } else {
+    document.addEventListener('DOMContentLoaded', function() {
+      document.head.appendChild(style);
+    });
+  }
+
+  /* ── 3. INP FIX: defer non-critical Volusion scripts ── */
+  // We can't defer Volusion's blocking scripts (they're baked into the template)
+  // but we CAN use scheduler.yield() to break up our own long tasks
+  // and avoid blocking the main thread during user interaction
+  
+  // Patch: wrap our own heavy operations in requestIdleCallback
+  window.__cwvDefer = function(fn) {
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(fn, { timeout: 2000 });
+    } else {
+      setTimeout(fn, 0);
+    }
+  };
+
+  /* ── 4. LCP: eliminate render-blocking font swap flash ── */
+  // Force font preconnect to tspaa.com image CDN
+  if (!document.querySelector('link[href*="doc.tspaa.com"][rel=preconnect]')) {
+    var pc = document.createElement('link');
+    pc.rel = 'preconnect';
+    pc.href = 'https://doc.tspaa.com';
+    pc.crossOrigin = 'anonymous';
+    document.head.insertBefore(pc, document.head.firstChild);
+  }
+
+})();
 /* ── Breadcrumb JSON-LD fix (GitHub Pages, bypasses CF-cached custom.js) ── */
 (function() {
   'use strict';
@@ -516,7 +643,11 @@
     });
   }
   /* Fire after a small delay so page render isn't blocked */
-  setTimeout(loadProductImages, 200);
+  window.__cwvDefer(function() { setTimeout(loadProductImages, 200); });
+
+  /* Use idle callback for async image loading to avoid INP impact */
+  var _origLoadProductImages = loadProductImages;
+  loadProductImages = function() { window.__cwvDefer(_origLoadProductImages); };
 
   /* Inject after page header, before original cart area */
   var insertBefore = cartTable ? cartTable.parentElement : document.querySelector('.v65-product-detail, #v65-main-wrap, .main');
